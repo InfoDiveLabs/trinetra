@@ -263,3 +263,66 @@ func TestPluginRuntimeStartProcFallsBackToExecWithoutSystemd(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPluginCompanionSpawnFailuresTripBreakerWithReason(t *testing.T) {
+	fastSupervisor(t)
+	rec, bin := pluginTestRecord(t, "binary")
+	stubPluginStartProc(t, func(plugin.Installed, string, string) (supervisedProc, error) {
+		return nil, errors.New("user: unknown user trinetra-plugin")
+	})
+	failed := make(chan string, 4)
+	clock := time.Unix(1_700_000_000, 0)
+	var cmu sync.Mutex
+	d := &pluginDeps{logf: func(string, ...any) {}, now: func() time.Time {
+		cmu.Lock()
+		defer cmu.Unlock()
+		clock = clock.Add(10 * time.Second)
+		return clock
+	}}
+	sup := newPluginSupervisor(d, func(id, reason string) { failed <- reason })
+	_ = sup.Start(rec, bin, "tok")
+	if running, _ := sup.Running("demo"); running {
+		t.Fatal("running before any process started")
+	}
+	select {
+	case got := <-failed:
+		if !strings.Contains(got, "unknown user trinetra-plugin") {
+			t.Fatalf("reason %q lacks the spawn error", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("spawn failures never tripped the breaker")
+	}
+	if running, restarts := sup.Running("demo"); running || restarts != 5 {
+		t.Fatalf("running=%v restarts=%d", running, restarts)
+	}
+	_ = sup.Stop("demo")
+}
+
+func TestPluginCompanionTamperedBinaryTripsBreaker(t *testing.T) {
+	fastSupervisor(t)
+	rec, bin := pluginTestRecord(t, "binary")
+	if err := os.WriteFile(bin, []byte("evil"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stubPluginStartProc(t, func(plugin.Installed, string, string) (supervisedProc, error) { return newFakeProc(), nil })
+	failed := make(chan string, 4)
+	clock := time.Unix(1_700_000_000, 0)
+	var cmu sync.Mutex
+	d := &pluginDeps{logf: func(string, ...any) {}, now: func() time.Time {
+		cmu.Lock()
+		defer cmu.Unlock()
+		clock = clock.Add(10 * time.Second)
+		return clock
+	}}
+	sup := newPluginSupervisor(d, func(id, reason string) { failed <- reason })
+	_ = sup.Start(rec, bin, "tok")
+	select {
+	case got := <-failed:
+		if !strings.Contains(got, "checksum mismatch") {
+			t.Fatalf("reason %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("tampered binary never tripped the breaker")
+	}
+	_ = sup.Stop("demo")
+}

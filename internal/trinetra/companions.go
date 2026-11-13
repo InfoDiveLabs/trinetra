@@ -9,7 +9,9 @@ type companionSpec struct {
 	Env     []string
 	Start   func(path string, env []string) (supervisedProc, error)
 	OnExit  func(exitErr error, uptime time.Duration) (retry bool)
-	Logf    func(format string, args ...any)
+	// OnStartFail, when set, sees every resolve or spawn failure; returning false stops supervision.
+	OnStartFail func(err error) (retry bool)
+	Logf        func(format string, args ...any)
 }
 
 // firstPartyCompanionNames returns the bundled companions ("ctl", "web").
@@ -36,6 +38,9 @@ func superviseCompanion(spec companionSpec, stopCh <-chan struct{}, done chan<- 
 		path, err := spec.Resolve()
 		if err != nil {
 			logf("%s: refusing to start %s: %v (run `trinetra install` after a rebuild)", spec.Name, bin, err)
+			if spec.OnStartFail != nil && !spec.OnStartFail(err) {
+				return
+			}
 			if !sleepOrStop(backoff, stopCh) {
 				return
 			}
@@ -46,6 +51,9 @@ func superviseCompanion(spec companionSpec, stopCh <-chan struct{}, done chan<- 
 		proc, err := spec.Start(path, spec.Env)
 		if err != nil {
 			logf("%s: failed to spawn %s: %v", spec.Name, path, err)
+			if spec.OnStartFail != nil && !spec.OnStartFail(err) {
+				return
+			}
 			if !sleepOrStop(backoff, stopCh) {
 				return
 			}

@@ -131,3 +131,27 @@ func TestPluginExecOtherPlatformsRefuse(t *testing.T) {
 		t.Fatalf("code %d msg %q", code, sb.String())
 	}
 }
+
+func TestEnsurePluginUserFallsBackToBusyboxAdduser(t *testing.T) {
+	rx, _ := pluginSystemSandbox(t)
+	rx.fail = func(name string, _ []string) error {
+		if name == "useradd" {
+			return os.ErrNotExist
+		}
+		return nil
+	}
+	if err := ensurePluginUser(); err != nil {
+		t.Fatal(err)
+	}
+	if !rx.ran("adduser -S -D -H -s /sbin/nologin trinetra-plugin") {
+		t.Fatalf("calls = %v", rx.calls)
+	}
+}
+
+func TestEnsurePluginUserNoopWhenPresent(t *testing.T) {
+	rx, _ := pluginSystemSandbox(t)
+	pluginUserExists = func() bool { return true }
+	if err := ensurePluginUser(); err != nil || len(rx.calls) != 0 {
+		t.Fatalf("err=%v calls=%v", err, rx.calls)
+	}
+}

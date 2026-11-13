@@ -36,6 +36,13 @@ type pluginRun struct {
 	stopOnce sync.Once
 	mu       sync.Mutex
 	restarts int
+	up       bool
+}
+
+func (r *pluginRun) setUp(v bool) {
+	r.mu.Lock()
+	r.up = v
+	r.mu.Unlock()
 }
 
 func (r *pluginRun) stop() {
@@ -83,32 +90,43 @@ func (s *pluginSupervisor) Start(rec plugin.Installed, binPath, token string) er
 	run := &pluginRun{stopCh: make(chan struct{}), done: make(chan struct{})}
 	breaker := pluginrt.NewBreaker(s.clock())
 	id := rec.ID
+	crashed := func(cause error) bool {
+		run.mu.Lock()
+		run.restarts++
+		run.up = false
+		run.mu.Unlock()
+		if !breaker.Crash() {
+			return true
+		}
+		reason := fmt.Sprintf("crash loop: %d crashes in %d minutes", pluginrt.BreakerMaxCrashes, int(pluginrt.BreakerWindow/time.Minute))
+		if cause != nil {
+			reason += "; last error: " + cause.Error()
+		}
+		s.logf("plugin %s: %s", id, reason)
+		if s.d != nil && s.d.deliverAlert != nil {
+			s.d.deliverAlert(Alert{Key: "plugin." + id + ".crashloop", Severity: SevInfo, Kind: "fire", Source: "plugin",
+				Title: fmt.Sprintf("Plugin %s stopped after repeated crashes; re-enable it to retry", rec.Manifest.Name),
+				Body:  reason,
+				Time:  s.clock()().Unix()})
+		}
+		if s.onFailed != nil {
+			go s.onFailed(id, reason)
+		}
+		return false
+	}
 	spec := companionSpec{
 		Name:    "plugin-" + id,
 		Resolve: func() (string, error) { return verifyPluginBinary(rec, binPath) },
 		Start: func(path string, _ []string) (supervisedProc, error) {
-			return pluginStartProc(rec, path, token)
+			p, err := pluginStartProc(rec, path, token)
+			if err == nil {
+				run.setUp(true)
+			}
+			return p, err
 		},
-		OnExit: func(exitErr error, uptime time.Duration) bool {
-			run.mu.Lock()
-			run.restarts++
-			run.mu.Unlock()
-			if !breaker.Crash() {
-				return true
-			}
-			reason := fmt.Sprintf("crash loop: %d crashes in %d minutes", pluginrt.BreakerMaxCrashes, int(pluginrt.BreakerWindow/time.Minute))
-			s.logf("plugin %s: %s", id, reason)
-			if s.d != nil && s.d.deliverAlert != nil {
-				s.d.deliverAlert(Alert{Key: "plugin." + id + ".crashloop", Severity: SevInfo, Kind: "fire", Source: "plugin",
-					Title: fmt.Sprintf("Plugin %s stopped after repeated crashes; re-enable it to retry", rec.Manifest.Name),
-					Time:  s.clock()().Unix()})
-			}
-			if s.onFailed != nil {
-				go s.onFailed(id, reason)
-			}
-			return false
-		},
-		Logf: s.logf,
+		OnExit:      func(exitErr error, _ time.Duration) bool { return crashed(exitErr) },
+		OnStartFail: crashed,
+		Logf:        s.logf,
 	}
 	s.mu.Lock()
 	s.runs[id] = run
@@ -139,7 +157,7 @@ func (s *pluginSupervisor) Running(id string) (bool, int) {
 	}
 	run.mu.Lock()
 	defer run.mu.Unlock()
-	return run.alive(), run.restarts
+	return run.up && run.alive(), run.restarts
 }
 
 // verifyPluginBinary re-checks binPath against the manifest hash and ownership before every spawn.
@@ -289,7 +307,10 @@ func writePluginUnit(x Exec, rec plugin.Installed, binPath, hostSock, tokenPath 
 	return nil
 }
 
-var pluginPrepareRuntimeDir = prepareRuntimeDir
+var (
+	pluginPrepareRuntimeDir = prepareRuntimeDir
+	pluginEnsureUser        = ensurePluginUser
+)
 
 func prepareRuntimeDir(id string, chownToPluginUser bool) error {
 	dir := filepath.Dir(pluginrt.PluginSocketPath(id))
@@ -312,6 +333,11 @@ func prepareRuntimeDir(id string, chownToPluginUser bool) error {
 
 func startExecProc(rec plugin.Installed, binPath, hostSock, tokenPath string) (supervisedProc, error) {
 	root := pluginIsRoot()
+	if root {
+		if err := pluginEnsureUser(); err != nil {
+			return nil, err
+		}
+	}
 	if err := pluginPrepareRuntimeDir(rec.ID, root); err != nil {
 		return nil, err
 	}
