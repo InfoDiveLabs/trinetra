@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 	"github.com/InfoDiveLabs/trinetra/pkg/pluginsdk"
 )
 
@@ -19,10 +18,10 @@ func settingsFrom(c pluginsdk.Config) settings {
 	return settings{listen: c.String("listen"), token: c.String("bearer_token"), fleet: c.Bool("include_fleet")}
 }
 
-func validateListen(c pluginsdk.Config) plugin.FieldErrors {
+func validateListen(c pluginsdk.Config) pluginsdk.FieldErrors {
 	_, port, err := net.SplitHostPort(c.String("listen"))
 	if n, perr := strconv.Atoi(port); err != nil || perr != nil || n < 0 || n > 65535 {
-		return plugin.FieldErrors{"listen": "must be host:port, for example 127.0.0.1:9469"}
+		return pluginsdk.FieldErrors{"listen": "must be host:port, for example 127.0.0.1:9469"}
 	}
 	return nil
 }

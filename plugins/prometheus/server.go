@@ -4,18 +4,17 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
+	"github.com/InfoDiveLabs/trinetra/pkg/pluginsdk"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 type source interface {
-	Snapshot() (core.DashboardView, error)
-	FleetNodes() ([]core.NodeSummary, error)
+	Snapshot() (pluginsdk.DashboardView, error)
+	FleetNodes() ([]pluginsdk.NodeSummary, error)
 }
 
 type settings struct {
@@ -135,7 +134,7 @@ func (e *exporter) serveMetrics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "snapshot unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	var nodes []core.NodeSummary
+	var nodes []pluginsdk.NodeSummary
 	if s.fleet {
 		nodes, _ = e.src.FleetNodes()
 	}

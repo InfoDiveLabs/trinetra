@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 	"github.com/InfoDiveLabs/trinetra/pkg/pluginsdk"
 )
 
@@ -59,15 +58,15 @@ const emptyHint = "No checks configured. Add lines in the plugin settings, for e
 func latencyText(d time.Duration) string { return strconv.FormatInt(d.Milliseconds(), 10) + " ms" }
 
 // ChecksPage renders the nav page: a status list and a detail table.
-func ChecksPage(checks []Check, res map[string]Result) []plugin.Widget {
+func ChecksPage(checks []Check, res map[string]Result) []pluginsdk.Widget {
 	if len(checks) == 0 {
-		return []plugin.Widget{pluginsdk.Text("Uptime", emptyHint)}
+		return []pluginsdk.Widget{pluginsdk.Text("Uptime", emptyHint)}
 	}
-	items := make([]plugin.StatusItem, 0, len(checks))
+	items := make([]pluginsdk.StatusItem, 0, len(checks))
 	rows := make([][]string, 0, len(checks))
 	for _, c := range checks {
 		r, ran := res[c.Name]
-		item := plugin.StatusItem{Name: c.Name, State: "unknown", Detail: "waiting for first run"}
+		item := pluginsdk.StatusItem{Name: c.Name, State: "unknown", Detail: "waiting for first run"}
 		row := []string{c.Name, string(c.Kind), c.Target, "never", "-", "-"}
 		if ran {
 			item.State = "down"
@@ -87,20 +86,20 @@ func ChecksPage(checks []Check, res map[string]Result) []plugin.Widget {
 		items = append(items, item)
 		rows = append(rows, row)
 	}
-	return []plugin.Widget{
+	return []pluginsdk.Widget{
 		pluginsdk.Status("Checks", items...),
 		pluginsdk.Table("Details", []string{"Name", "Kind", "Target", "Last check", "Latency", "Cert days"}, rows),
 	}
 }
 
 // Overview renders the dashboard panel: combined latency graph and the expiring-certs stat.
-func Overview(checks []Check, res map[string]Result) []plugin.Widget {
+func Overview(checks []Check, res map[string]Result) []pluginsdk.Widget {
 	if len(checks) == 0 {
-		return []plugin.Widget{pluginsdk.Text("Uptime overview", emptyHint)}
+		return []pluginsdk.Widget{pluginsdk.Text("Uptime overview", emptyHint)}
 	}
-	var series []plugin.SeriesRef
+	var series []pluginsdk.SeriesRef
 	for _, c := range checks {
-		if len(series) == plugin.MaxSeriesPerChart {
+		if len(series) == pluginsdk.MaxSeriesPerChart {
 			break
 		}
 		series = append(series, pluginsdk.Series("check."+c.Name+".latency_ms", c.Name))
@@ -116,7 +115,7 @@ func Overview(checks []Check, res map[string]Result) []plugin.Widget {
 	if n > 0 {
 		tone = "warn"
 	}
-	return []plugin.Widget{
+	return []pluginsdk.Widget{
 		pluginsdk.Timeseries("Latency", "ms", series...),
 		pluginsdk.StatTone(stat, tone),
 	}

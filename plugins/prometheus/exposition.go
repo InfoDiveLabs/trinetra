@@ -2,13 +2,12 @@ package main
 
 import (
 	"bufio"
+	"github.com/InfoDiveLabs/trinetra/pkg/pluginsdk"
 	"io"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 type sample struct {
@@ -29,7 +28,7 @@ func scalar(name, help string, v float64) family {
 	return family{name: name, help: help, samples: []sample{{value: v}}}
 }
 
-func buildFamilies(v core.DashboardView, nodes []core.NodeSummary, includeFleet bool) []family {
+func buildFamilies(v pluginsdk.DashboardView, nodes []pluginsdk.NodeSummary, includeFleet bool) []family {
 	fams := []family{
 		scalar("trinetra_snapshot_timestamp_seconds", "Unix time of the snapshot the values come from.", float64(v.TS)),
 		scalar("trinetra_cpu_usage_percent", "CPU utilisation in percent.", v.CPU),
@@ -74,9 +73,9 @@ func buildFamilies(v core.DashboardView, nodes []core.NodeSummary, includeFleet 
 	return fams
 }
 
-func containerFamilies(v core.DashboardView) []family {
-	byName := map[string]core.ContainerView{}
-	for _, list := range [][]core.ContainerView{v.TopMemContainers, v.TopCPUContainers} {
+func containerFamilies(v pluginsdk.DashboardView) []family {
+	byName := map[string]pluginsdk.ContainerView{}
+	for _, list := range [][]pluginsdk.ContainerView{v.TopMemContainers, v.TopCPUContainers} {
 		for _, c := range list {
 			byName[c.Name] = c
 		}
@@ -98,7 +97,7 @@ func containerFamilies(v core.DashboardView) []family {
 	return []family{cpu, mem}
 }
 
-func fleetFamilies(nodes []core.NodeSummary) []family {
+func fleetFamilies(nodes []pluginsdk.NodeSummary) []family {
 	if len(nodes) == 0 {
 		return nil
 	}

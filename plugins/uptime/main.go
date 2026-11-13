@@ -12,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 	"github.com/InfoDiveLabs/trinetra/pkg/pluginsdk"
 )
 
@@ -46,11 +45,11 @@ func newApp(prober *Prober) *app {
 	a.sched = NewScheduler(prober.Run, a.onResult)
 	a.p.OnConfig(a.apply)
 	a.p.HandleValidateConfig(validateConfig)
-	a.p.HandleSlot("checks", func(ctx context.Context, req plugin.SlotRequest) ([]plugin.Widget, error) {
+	a.p.HandleSlot("checks", func(ctx context.Context, req pluginsdk.SlotRequest) ([]pluginsdk.Widget, error) {
 		cs, res := a.store.Snapshot()
 		return ChecksPage(cs, res), nil
 	})
-	a.p.HandleSlot("overview", func(ctx context.Context, req plugin.SlotRequest) ([]plugin.Widget, error) {
+	a.p.HandleSlot("overview", func(ctx context.Context, req pluginsdk.SlotRequest) ([]pluginsdk.Widget, error) {
 		cs, res := a.store.Snapshot()
 		return Overview(cs, res), nil
 	})
@@ -95,12 +94,12 @@ func joinErrs(errs []string) string {
 	return fmt.Sprintf("%s; and %d more", strings.Join(errs[:show], "; "), len(errs)-show)
 }
 
-func validateConfig(cfg pluginsdk.Config) plugin.FieldErrors {
+func validateConfig(cfg pluginsdk.Config) pluginsdk.FieldErrors {
 	p := parseLines(cfg.Strings("checks"))
 	if len(p.errs) == 0 {
 		return nil
 	}
-	return plugin.FieldErrors{"checks": joinErrs(p.errs)}
+	return pluginsdk.FieldErrors{"checks": joinErrs(p.errs)}
 }
 
 func orDefault(d, def time.Duration) time.Duration {

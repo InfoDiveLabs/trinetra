@@ -19,8 +19,8 @@ Host-rendered slots need no handler. The `prometheus` plugin only declares `sett
 Plugin-rendered slots register a handler:
 
 ```go
-p.HandleSlot("main", func(ctx context.Context, req plugin.SlotRequest) ([]plugin.Widget, error) {
-    return []plugin.Widget{pluginsdk.Stat("Checks", "12", "")}, nil
+p.HandleSlot("main", func(ctx context.Context, req pluginsdk.SlotRequest) ([]pluginsdk.Widget, error) {
+    return []pluginsdk.Widget{pluginsdk.Stat("Checks", "12", "")}, nil
 })
 ```
 
@@ -60,8 +60,8 @@ A widget has a `kind`, an optional `title` and exactly one matching body. The SD
 `InvokeAction` runs a declared action with a 10 second deadline:
 
 ```go
-p.HandleAction("restart-probe", func(ctx context.Context, req plugin.ActionRequest) (plugin.ActionResult, error) {
-    return plugin.ActionResult{OK: true, Message: "restarted"}, nil
+p.HandleAction("restart-probe", func(ctx context.Context, req pluginsdk.ActionRequest) (pluginsdk.ActionResult, error) {
+    return pluginsdk.ActionResult{OK: true, Message: "restarted"}, nil
 })
 ```
 

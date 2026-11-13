@@ -67,11 +67,15 @@ Returning the plugin from a constructor instead of building it inside `main` is 
 | `Logf(level, ...)` | Rate-limited log line to the host. | none |
 | `HandleSlot`, `HandleAction`, `HandleEvent` | Answer UI, action and event calls. | none |
 | `Snapshot()` | Live host metrics. | `metrics.read` |
+| `Series(metric, from, to, res)` | Stored history for a metric. | `metrics.read` |
+| `ActiveAlerts()` | Alerts active on this node. | `alerts.read` |
+| `Containers()` | Docker containers with CPU and memory use. | `docker.read` |
+| `ContainerLogs(name, lines)` | The last lines of a container's log. | `docker.read`, `logs.read` |
 | `FleetNodes()` | Fleet roster on a master. | `fleet.read` |
 | `Publish(ts, metrics)` | Add metrics to the store as `plugin.<id>.<name>`. | `metrics.publish` |
 | `RaiseAlert`, `ResolveAlert` | Alerts through the core's routing. | `alerts.raise` |
 
-Widget constructors (`Stat`, `Table`, `Timeseries`, ...) are covered in [Slots and widgets](slots-and-widgets.md).
+Widget constructors (`Stat`, `Table`, `Timeseries`, ...) are covered in [Slots and widgets](slots-and-widgets.md). Every type a handler needs (`SlotRequest`, `Widget`, `ActionResult`, `DashboardView`, `Permission`, ...) is exported by `pkg/pluginsdk`, so a plugin in its own repository imports only `pkg/pluginsdk` and `pkg/pluginsdk/pluginsdktest`.
 
 ### Config changes
 
@@ -102,7 +106,7 @@ h.Start(p)
 
 Useful pieces of the fake host: `SetConfig` (pushes a change), `SetSnapshot`, `SetFleetNodes`, `Status`, `Logs`, `Published`, `Alerts`, `Resolved`, `Render`, `Invoke` and `Call` for raw core-to-plugin calls.
 
-Test the pure parts directly. The exposition writer has a golden-output test, an escaping test and a NaN test, and none of them need a host. Also decode your manifest in a test (`plugin.DecodeManifest`, with a dummy `binaries` entry filled in) so a typo fails in `go test` rather than at install.
+Test the pure parts directly. The exposition writer has a golden-output test, an escaping test and a NaN test, and none of them need a host. Also run `trinetra-registry check -dir .` so a manifest typo fails before install.
 
 For a test against the real daemon path, build and install the plugin the way the user would. `internal/plugin/plugintest.BuildFrom` compiles a plugin directory, signs a throwaway manifest and returns a package that `internal/trinetra`'s end-to-end harness can install and enable; see `internal/trinetra/plugins_prometheus_e2e_test.go`.
 

@@ -3,14 +3,14 @@ package main
 import (
 	"testing"
 
-	"github.com/InfoDiveLabs/trinetra/internal/plugin"
+	"github.com/InfoDiveLabs/trinetra/pkg/pluginsdk"
 	"github.com/InfoDiveLabs/trinetra/pkg/pluginsdk/pluginsdktest"
 )
 
 func TestHelloSlotRendersGreeting(t *testing.T) {
 	h := pluginsdktest.New(t, "hello", nil, nil)
 	h.Start(newPlugin())
-	res, err := h.Render("hello", plugin.SlotContext{})
+	res, err := h.Render("hello", pluginsdk.SlotContext{})
 	if err != nil {
 		t.Fatal(err)
 	}

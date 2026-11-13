@@ -7,7 +7,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 	"github.com/InfoDiveLabs/trinetra/pkg/pluginsdk"
 )
 
@@ -15,8 +14,8 @@ const version = "0.1.0"
 
 func newPlugin() *pluginsdk.Plugin {
 	p := pluginsdk.New(pluginsdk.Options{Version: version})
-	p.HandleSlot("hello", func(ctx context.Context, req plugin.SlotRequest) ([]plugin.Widget, error) {
-		return []plugin.Widget{pluginsdk.Text("Hello", "Hello from the template plugin.")}, nil
+	p.HandleSlot("hello", func(ctx context.Context, req pluginsdk.SlotRequest) ([]pluginsdk.Widget, error) {
+		return []pluginsdk.Widget{pluginsdk.Text("Hello", "Hello from the template plugin.")}, nil
 	})
 	return p
 }
