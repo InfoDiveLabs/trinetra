@@ -6,12 +6,12 @@ A plugin can only do what its manifest requests and the operator approved. The c
 
 | Permission | Consent line | Unlocks |
 |---|---|---|
-| `metrics.read` | can read this host's metrics and history | `Plugin.Snapshot`, `Plugin.Series` (`p.Snapshot()`) |
+| `metrics.read` | can read this host's metrics and history | `Plugin.Snapshot`, `Plugin.Series` (`p.Snapshot()`, `p.Series()`) |
 | `metrics.publish` | can add its own metrics to Trinetra's charts and history | `Plugin.PublishSeries` (`p.Publish`) |
-| `alerts.read` | can see active and past alerts | `Plugin.ActiveAlerts` |
+| `alerts.read` | can see active and past alerts | `Plugin.ActiveAlerts` (`p.ActiveAlerts()`) |
 | `alerts.raise` | can raise and resolve its own alerts through your notification channels | `Plugin.RaiseAlert`, `Plugin.ResolveAlert` |
-| `docker.read` | can see your Docker containers and their resource use | `Plugin.Containers`, container fields in `Snapshot` |
-| `logs.read` | can read container logs, which may contain secrets | `Plugin.ContainerLogs` (also needs `docker.read`) |
+| `docker.read` | can see your Docker containers and their resource use | `Plugin.Containers` (`p.Containers()`), container fields in `Snapshot` |
+| `logs.read` | can read container logs, which may contain secrets | `Plugin.ContainerLogs` (`p.ContainerLogs()`, also needs `docker.read`) |
 | `fleet.read` | can see the fleet's nodes and their status | `Plugin.FleetNodes` (`p.FleetNodes()`) |
 | `net.outbound` | can make outbound network connections | Network access to other hosts |
 | `net.listen` | can open a network port on this host | Binding a listener |

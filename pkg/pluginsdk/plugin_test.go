@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 	"github.com/InfoDiveLabs/trinetra/pkg/pluginsdk"
 	"github.com/InfoDiveLabs/trinetra/pkg/pluginsdk/pluginsdktest"
@@ -292,5 +293,43 @@ func TestSDKIsStdlibOnly(t *testing.T) {
 		if !allowed[line] {
 			t.Errorf("non-stdlib dependency: %s", line)
 		}
+	}
+}
+
+func TestSDKReadCalls(t *testing.T) {
+	h := pluginsdktest.New(t, "probe", []plugin.Permission{plugin.PermDockerRead, plugin.PermLogsRead, plugin.PermMetricsRead, plugin.PermAlertsRead}, nil)
+	h.SetContainers([]core.ContainerView{{Name: "web", State: "running", CPUPct: 3, MemMiB: 40}})
+	h.SetContainerLogs("web", "line1\nline2")
+	h.SetSeries("cpu", []core.SeriesPoint{{TS: 10, Avg: 1.5}})
+	h.SetActiveAlerts([]core.AlertRecord{{Key: "cpu"}})
+	p := pluginsdk.New(pluginsdk.Options{})
+	h.Start(p)
+	cs, err := p.Containers()
+	if err != nil || len(cs) != 1 || cs[0].Name != "web" || cs[0].MemMiB != 40 {
+		t.Fatalf("%+v %v", cs, err)
+	}
+	logs, err := p.ContainerLogs("web", 50)
+	if err != nil || logs != "line1\nline2" {
+		t.Fatalf("%q %v", logs, err)
+	}
+	pts, err := p.Series("cpu", 0, 100, 0)
+	if err != nil || len(pts) != 1 || pts[0].Avg != 1.5 {
+		t.Fatalf("%+v %v", pts, err)
+	}
+	al, err := p.ActiveAlerts()
+	if err != nil || len(al) != 1 || al[0].Key != "cpu" {
+		t.Fatalf("%+v %v", al, err)
+	}
+}
+
+func TestSDKReadCallsDeniedWithoutGrant(t *testing.T) {
+	h := pluginsdktest.New(t, "probe", []plugin.Permission{plugin.PermDockerRead}, nil)
+	p := pluginsdk.New(pluginsdk.Options{})
+	h.Start(p)
+	if _, err := p.ContainerLogs("web", 10); err == nil || !strings.Contains(err.Error(), "not permitted") {
+		t.Fatalf("logs without logs.read: %v", err)
+	}
+	if _, err := p.ActiveAlerts(); err == nil {
+		t.Fatal("alerts without alerts.read")
 	}
 }

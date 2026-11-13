@@ -245,6 +245,34 @@ func (p *Plugin) FleetNodes() ([]core.NodeSummary, error) {
 	return out, err
 }
 
+// Series returns history points for a stored metric between from and to (Unix seconds); it needs metrics.read.
+func (p *Plugin) Series(metric string, from, to int64, res int) ([]core.SeriesPoint, error) {
+	var out []core.SeriesPoint
+	err := p.hostCall(plugin.MethodSeries, plugin.SeriesRequest{Metric: metric, From: from, To: to, Res: res}, &out)
+	return out, err
+}
+
+// ActiveAlerts returns the alerts currently active on this node; it needs alerts.read.
+func (p *Plugin) ActiveAlerts() ([]core.AlertRecord, error) {
+	var out []core.AlertRecord
+	err := p.hostCall(plugin.MethodActiveAlerts, struct{}{}, &out)
+	return out, err
+}
+
+// Containers returns this node's Docker containers with their resource use; it needs docker.read.
+func (p *Plugin) Containers() ([]core.ContainerView, error) {
+	var out []core.ContainerView
+	err := p.hostCall(plugin.MethodContainers, struct{}{}, &out)
+	return out, err
+}
+
+// ContainerLogs returns the last lines of a container's log; it needs docker.read and logs.read.
+func (p *Plugin) ContainerLogs(name string, lines int) (string, error) {
+	var out string
+	err := p.hostCall(plugin.MethodContainerLogs, plugin.ContainerLogsRequest{Name: name, Lines: lines}, &out)
+	return out, err
+}
+
 // RaiseAlert raises (or updates) the alert key with severity info, warning or critical.
 func (p *Plugin) RaiseAlert(key, severity, title, body string) error {
 	return p.hostCall(plugin.MethodRaiseAlert, plugin.AlertRequest{Key: key, Severity: severity, Title: title, Body: body}, nil)

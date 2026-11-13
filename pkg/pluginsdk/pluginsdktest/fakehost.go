@@ -42,6 +42,10 @@ type FakeHost struct {
 	hellos    int
 	snapshot  core.DashboardView
 	fleet     []core.NodeSummary
+	conts     []core.ContainerView
+	contLogs  map[string]string
+	series    map[string][]core.SeriesPoint
+	active    []core.AlertRecord
 	watchers  map[chan plugin.ConfigResponse]struct{}
 	cancel    context.CancelFunc
 	done      chan struct{}
@@ -165,6 +169,40 @@ func (h *FakeHost) SetSnapshot(v core.DashboardView) {
 func (h *FakeHost) SetFleetNodes(n []core.NodeSummary) {
 	h.mu.Lock()
 	h.fleet = n
+	h.mu.Unlock()
+}
+
+// SetContainers sets the list Plugin.Containers returns.
+func (h *FakeHost) SetContainers(c []core.ContainerView) {
+	h.mu.Lock()
+	h.conts = c
+	h.mu.Unlock()
+}
+
+// SetContainerLogs sets the text Plugin.ContainerLogs returns for name.
+func (h *FakeHost) SetContainerLogs(name, logs string) {
+	h.mu.Lock()
+	if h.contLogs == nil {
+		h.contLogs = map[string]string{}
+	}
+	h.contLogs[name] = logs
+	h.mu.Unlock()
+}
+
+// SetSeries sets the points Plugin.Series returns for metric.
+func (h *FakeHost) SetSeries(metric string, pts []core.SeriesPoint) {
+	h.mu.Lock()
+	if h.series == nil {
+		h.series = map[string][]core.SeriesPoint{}
+	}
+	h.series[metric] = pts
+	h.mu.Unlock()
+}
+
+// SetActiveAlerts sets the list Plugin.ActiveAlerts returns.
+func (h *FakeHost) SetActiveAlerts(a []core.AlertRecord) {
+	h.mu.Lock()
+	h.active = a
 	h.mu.Unlock()
 }
 
@@ -376,6 +414,22 @@ func (h *FakeHost) handle(req plugin.Request) (any, error) {
 		return h.snapshot, nil
 	case plugin.MethodFleetNodes:
 		return h.fleet, nil
+	case plugin.MethodContainers:
+		return h.conts, nil
+	case plugin.MethodContainerLogs:
+		var r plugin.ContainerLogsRequest
+		if err := decode(req, &r); err != nil {
+			return nil, err
+		}
+		return h.contLogs[r.Name], nil
+	case plugin.MethodSeries:
+		var r plugin.SeriesRequest
+		if err := decode(req, &r); err != nil {
+			return nil, err
+		}
+		return h.series[r.Metric], nil
+	case plugin.MethodActiveAlerts:
+		return h.active, nil
 	case plugin.MethodReportStatus:
 		var s plugin.StatusReport
 		if err := decode(req, &s); err != nil {
