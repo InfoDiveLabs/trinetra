@@ -322,3 +322,24 @@ func TestHostPageHasSectionPlaceholders(t *testing.T) {
 		t.Errorf("host sections missing or called synchronously")
 	}
 }
+
+func TestActionBackPathStaysOnThisSite(t *testing.T) {
+	cases := map[string]string{
+		"":                               "/",
+		"http://example.test/monitoring": "/monitoring",
+		"http://example.test/n/abc/monitoring?x=1": "/n/abc/monitoring?x=1",
+		"http://evil.test/monitoring":              "/",
+		"http://example.test//evil.test/x":         "/",
+		"http://example.test/plugins/action":       "/",
+		"not a url %%":                             "/",
+	}
+	for ref, want := range cases {
+		r := httptest.NewRequest(http.MethodPost, "http://example.test/plugins/action", nil)
+		if ref != "" {
+			r.Header.Set("Referer", ref)
+		}
+		if got := actionBackPath(r); got != want {
+			t.Errorf("referer %q: back %q, want %q", ref, got, want)
+		}
+	}
+}

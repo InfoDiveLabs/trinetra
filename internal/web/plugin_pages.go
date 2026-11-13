@@ -132,10 +132,23 @@ func pluginSlotHandler(d Deps) http.HandlerFunc {
 
 type PluginActionPageData struct {
 	PageData
+	Back    string
 	Label   string
 	OK      bool
 	Message string
 	Widgets template.HTML
+}
+
+// actionBackPath is the local path the action was submitted from, or "/" when the Referer is missing or not this site.
+func actionBackPath(r *http.Request) string {
+	u, err := url.Parse(r.Header.Get("Referer"))
+	if err != nil || u.Host != r.Host || !strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") || u.Path == "/plugins/action" {
+		return "/"
+	}
+	if u.RawQuery != "" {
+		return u.Path + "?" + u.RawQuery
+	}
+	return u.Path
 }
 
 func pluginActionHandler(d Deps) http.HandlerFunc {
@@ -183,7 +196,7 @@ func pluginActionHandler(d Deps) http.HandlerFunc {
 		if decl.Mutating {
 			logAudit(d, r, "plugin.action", pid+"/"+aid, "", "")
 		}
-		data := PluginActionPageData{PageData: newPageData(r, d, decl.Label, st.Manifest.Name), Label: decl.Label}
+		data := PluginActionPageData{PageData: newPageData(r, d, decl.Label, st.Manifest.Name), Label: decl.Label, Back: actionBackPath(r)}
 		if err != nil {
 			log.Printf("web: plugin %s action %s: %v", pid, aid, err)
 			data.Message = "The action failed. Details are in the plugin's log."

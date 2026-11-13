@@ -2,6 +2,6 @@
 <div id="plugin-action-result">
   <div class="flash{{if not .OK}} err{{end}}" role="status">{{if .Message}}{{.Message}}{{else if .OK}}Done.{{else}}The action did not complete.{{end}}</div>
   {{if .Widgets}}{{.Widgets}}{{end}}
-  <a class="btn ghost" href="/">Back to dashboard</a>
+  <a class="btn ghost" href="{{.Back}}">Back</a>
 </div>
 {{end}}
