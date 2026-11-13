@@ -471,7 +471,7 @@ func (e *fleetAlertEngine) tryDeliverGroup(id string) {
 		if al.Suppressed != "" || al.SilencedBy != "" {
 			continue
 		}
-		if fireDelivered, _ := legDeliveredStatusFor(inc, al.Node, al.Key, al.FiredAt); fireDelivered {
+		if fireDelivered, _ := legDeliveredStatusFor(inc, al.Node, al.Key, al.FiredAt, al.ResolvedAt); fireDelivered {
 			anyDelivered = true
 			continue
 		}
@@ -844,14 +844,18 @@ func legDeliveredStatus(inc core.Incident) (fireDelivered, recoverDelivered bool
 }
 
 // legDeliveredStatusFor is legDeliveredStatus scoped to ONE member alert, matched by (Node,
-// AlertKey, FiredAt).
-func legDeliveredStatusFor(inc core.Incident, node, key string, firedAt int64) (fireDelivered, recoverDelivered bool) {
+// AlertKey, FiredAt). A master-own recover is stamped with its resolve time, so a recover
+// leg also matches resolvedAt.
+func legDeliveredStatusFor(inc core.Incident, node, key string, firedAt, resolvedAt int64) (fireDelivered, recoverDelivered bool) {
 	for _, ev := range inc.Timeline {
 		if ev.Kind != "delivered" && ev.Kind != "suppressed" {
 			continue
 		}
 		if ev.Leg != "" {
-			if ev.Node != node || ev.AlertKey != key || ev.FiredAt != firedAt {
+			if ev.Node != node || ev.AlertKey != key {
+				continue
+			}
+			if ev.FiredAt != firedAt && (ev.Leg != "recover" || resolvedAt == 0 || ev.FiredAt != resolvedAt) {
 				continue
 			}
 			switch ev.Leg {
@@ -892,7 +896,7 @@ func (e *fleetAlertEngine) resurrectMasterAlerts() {
 				continue // a child-sourced or dependency-folded member: not this function's job
 			}
 			hasRecover := al.ResolvedAt != 0
-			fireDelivered, recoverDelivered := legDeliveredStatusFor(inc, al.Node, al.Key, al.FiredAt)
+			fireDelivered, recoverDelivered := legDeliveredStatusFor(inc, al.Node, al.Key, al.FiredAt, al.ResolvedAt)
 			if fireDelivered && (!hasRecover || recoverDelivered) {
 				continue // both recorded legs already confirmed delivered
 			}
@@ -917,7 +921,7 @@ func (e *fleetAlertEngine) resurrectMasterAlerts() {
 			e.dispatch.Enqueue(id, func() { e.tryDeliverGroup(id) })
 		}
 		for _, al := range pendingRecovers {
-			a := Alert{Key: al.Key, Title: al.Title, Severity: mustSeverity(al.Severity), Kind: "recover", Time: al.ResolvedAt}
+			a := Alert{Key: al.Key, Title: orphanRecoverTitle(al.Title), Severity: mustSeverity(al.Severity), Kind: "recover", Time: al.ResolvedAt}
 			firedAt := al.ResolvedAt
 			e.dispatch.Enqueue(id, func() {
 				e.deliverAndReceiptDetail(alertSource{}, a, firedAt, id, "redelivered after restart")

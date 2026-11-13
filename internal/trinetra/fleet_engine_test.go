@@ -600,6 +600,9 @@ func TestEngineResurrectsOnlyUndeliveredRecoverLeg(t *testing.T) {
 	if len(delivered) != 1 || delivered[0].Kind != "recover" {
 		t.Fatalf("delivered = %+v, want exactly one recover redelivery", delivered)
 	}
+	if !strings.Contains(delivered[0].Title, "recovered") {
+		t.Errorf("redelivered recover reads like a down page: %q", delivered[0].Title)
+	}
 	inc, ok := incidents2.Get(inc0.ID)
 	if !ok {
 		t.Fatal("incident missing")

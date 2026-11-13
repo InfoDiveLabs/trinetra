@@ -320,7 +320,7 @@ func TestEngineResurrectionGroupsMultipleMastersOwnMembersIntoOneMessage(t *test
 				al = cand
 			}
 		}
-		if fireDelivered, _ := legDeliveredStatusFor(inc, "", key, al.FiredAt); !fireDelivered {
+		if fireDelivered, _ := legDeliveredStatusFor(inc, "", key, al.FiredAt, al.ResolvedAt); !fireDelivered {
 			t.Fatalf("member %s not marked delivered after grouped resurrection: %+v", key, inc.Timeline)
 		}
 	}
