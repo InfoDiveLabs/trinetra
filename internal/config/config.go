@@ -163,6 +163,27 @@ type Config struct {
 		GitHubToken   string `json:"github_token,omitempty"`   // read-only token for a private repo
 		CheckInterval string `json:"check_interval,omitempty"` // Go duration >= 1h; "" = 24h
 	} `json:"update"`
+	// Plugins configures the plugin system.
+	Plugins struct {
+		AllowUnverified *bool  `json:"allow_unverified,omitempty"`
+		RegistryURL     string `json:"registry_url,omitempty"`
+	} `json:"plugins"`
+}
+
+// DefaultPluginRegistryURL is where the signed plugin index is fetched from by default.
+const DefaultPluginRegistryURL = "https://github.com/InfoDiveLabs/trinetra-plugins/releases/download/index/"
+
+// PluginsAllowUnverified defaults to true when unset.
+func (c *Config) PluginsAllowUnverified() bool {
+	return c.Plugins.AllowUnverified == nil || *c.Plugins.AllowUnverified
+}
+
+// PluginsRegistryURL defaults to DefaultPluginRegistryURL.
+func (c *Config) PluginsRegistryURL() string {
+	if c.Plugins.RegistryURL == "" {
+		return DefaultPluginRegistryURL
+	}
+	return c.Plugins.RegistryURL
 }
 
 // KeepFleetIdentity copies the fleet identity keys (role, address, master URL, CA pin, node
@@ -805,6 +826,10 @@ func (c *Config) Get(key string) (string, bool) {
 			return "24h", true
 		}
 		return c.Update.CheckInterval, true
+	case "plugins.allow_unverified":
+		return strconv.FormatBool(c.PluginsAllowUnverified()), true
+	case "plugins.registry_url":
+		return c.PluginsRegistryURL(), true
 	}
 	return "", false
 }
@@ -1113,6 +1138,17 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("update.check_interval %q invalid: want a duration >= 1h, e.g. 24h", val)
 		}
 		c.Update.CheckInterval = val
+	case "plugins.allow_unverified":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("plugins.allow_unverified: %w", err)
+		}
+		c.Plugins.AllowUnverified = &b
+	case "plugins.registry_url":
+		if !strings.HasPrefix(val, "https://") {
+			return fmt.Errorf("plugins.registry_url %q invalid: want an https:// URL", val)
+		}
+		c.Plugins.RegistryURL = val
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}
@@ -1222,6 +1258,9 @@ var keyCatalog = []KeyInfo{
 	{Name: "update.source", Group: "Updates", Kind: "enum", Help: "Where to look for releases: github, or none (bundle directories only)."},
 	{Name: "update.github_token", Group: "Updates", Kind: "string", Secret: true, Help: "Read-only GitHub token, needed while the release repo is private."},
 	{Name: "update.check_interval", Group: "Updates", Kind: "duration", Help: "How often to check for a newer signed release (>= 1h). Default 24h."},
+
+	{Name: "plugins.allow_unverified", Group: "Plugins", Kind: "bool", Help: "Allow installing plugins that are not signed by the Trinetra registry. Default true."},
+	{Name: "plugins.registry_url", Group: "Plugins", Kind: "string", Help: "https URL of the signed plugin registry index."},
 }
 
 // effectiveFastInterval returns c.FastInterval, or the default (5) for a

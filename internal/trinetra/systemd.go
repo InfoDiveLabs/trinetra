@@ -97,6 +97,7 @@ func cmdInstall(args []string) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	ensurePluginSystemBestEffort()
 	// Only nudge the operator to set a Telegram token on a genuinely unconfigured host.
 	waitErr := waitForDaemonFn()
 	switch {
@@ -226,7 +227,7 @@ var errNoSignedManifest = errors.New("trinetra: no signed manifest found next to
 func companionInstallNames(self string) []string {
 	names := []string{"trinetra"}
 	dir := filepath.Dir(self)
-	for _, n := range pluginManifestNames {
+	for _, n := range firstPartyCompanionNames() {
 		p := filepath.Join(dir, "trinetra-"+n)
 		if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() {
 			names = append(names, "trinetra-"+n)
@@ -395,7 +396,7 @@ func installedPluginsMessage() string {
 		return "no plugin binaries found alongside the source binary (trinetra-ctl/trinetra-web skipped);"
 	}
 	var names []string
-	for _, name := range pluginManifestNames {
+	for _, name := range firstPartyCompanionNames() {
 		if _, ok := manifest[name]; ok {
 			names = append(names, "trinetra-"+name)
 		}
@@ -407,10 +408,10 @@ func installedPluginsMessage() string {
 }
 
 // copyPluginsAlongside copies each companion plugin binary ("trinetra-<name>" for every
-// name in pluginManifestNames) found in srcDir into dstDir at mode 0755.
+// name in firstPartyCompanionNames()) found in srcDir into dstDir at mode 0755.
 func copyPluginsAlongside(srcDir, dstDir string) error {
 	var errs []string
-	for _, name := range pluginManifestNames {
+	for _, name := range firstPartyCompanionNames() {
 		binName := "trinetra-" + name
 		src := filepath.Join(srcDir, binName)
 		info, err := os.Lstat(src)
@@ -461,14 +462,11 @@ func unlinkOnPath(target, link string) {
 	}
 }
 
-// pluginManifestNames lists the companion binary name suffixes.
-var pluginManifestNames = []string{"ctl", "web"}
-
 // writePluginManifest scans binDir (the directory the daemon binary was just installed
 // into) for companion plugin binaries and writes <stateDir>/plugins.json.
 func writePluginManifest(binDir string) error {
 	manifest := make(map[string]string)
-	for _, name := range pluginManifestNames {
+	for _, name := range firstPartyCompanionNames() {
 		path := filepath.Join(binDir, "trinetra-"+name)
 		info, err := os.Lstat(path)
 		if err != nil {
@@ -505,9 +503,9 @@ func writePluginManifest(binDir string) error {
 }
 
 // removeInstalledPlugins removes each companion plugin binary ("trinetra-<name>" for every
-// name in pluginManifestNames) from binDir.
+// name in firstPartyCompanionNames()) from binDir.
 func removeInstalledPlugins(binDir string) {
-	for _, name := range pluginManifestNames {
+	for _, name := range firstPartyCompanionNames() {
 		_ = os.Remove(filepath.Join(binDir, "trinetra-"+name))
 	}
 }
@@ -515,6 +513,7 @@ func removeInstalledPlugins(binDir string) {
 func cmdUninstall(args []string) int {
 	x := osExec{}
 	_, _ = x.Run("systemctl", "disable", "--now", "trinetra")
+	removePluginSystem()
 	_ = os.Remove(unitPath)
 	removeWatchdog(defaultUpdatePaths(), x)
 	// Remove the /usr/bin shortcut, but only if it is still OUR symlink into

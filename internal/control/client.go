@@ -13,6 +13,7 @@ import (
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 )
 
 // callTimeout bounds how long Client.call waits for a response. call holds the client mutex
@@ -47,6 +48,9 @@ type clientConn struct {
 	mu       sync.Mutex
 	nextID   int
 	lastUsed time.Time
+
+	// meta guards token and tokenSource so per-call dials can read them without waiting on mu.
+	meta sync.Mutex
 }
 
 var _ core.API = (*Client)(nil)
@@ -78,12 +82,14 @@ func (c *Client) Fleet() core.FleetAPI {
 // SetTokenSource makes reconnects re-read the token, so the client survives
 // a daemon restart.
 func (c *Client) SetTokenSource(f func() (string, error)) {
-	c.mu.Lock()
+	c.meta.Lock()
 	c.tokenSource = f
-	c.mu.Unlock()
+	c.meta.Unlock()
 }
 
 func (c *clientConn) refreshToken() {
+	c.meta.Lock()
+	defer c.meta.Unlock()
 	if c.tokenSource == nil {
 		return
 	}
@@ -102,7 +108,10 @@ func (c *Client) connect() error {
 	}
 	r := bufio.NewReader(conn)
 
-	if err := writeFrame(conn, hello{Hello: helloMagic, Version: ProtocolVersion, Token: c.token}); err != nil {
+	c.meta.Lock()
+	tok := c.token
+	c.meta.Unlock()
+	if err := writeFrame(conn, hello{Hello: helloMagic, Version: ProtocolVersion, Token: tok}); err != nil {
 		conn.Close()
 		return err
 	}
@@ -153,7 +162,7 @@ func (c *Client) Close() error {
 
 // wireErrSentinels lists the core sentinel errors a control-socket caller may need to
 // recover via errors.Is, checked by reconstructWireErr in order.
-var wireErrSentinels = []error{core.ErrNoSuchNode, core.ErrNotMaster, core.ErrConflict, core.ErrNotFound, core.ErrStatusPageOnChild}
+var wireErrSentinels = append([]error{core.ErrNoSuchNode, core.ErrNotMaster, core.ErrConflict, core.ErrNotFound, core.ErrStatusPageOnChild}, plugin.Sentinels...)
 
 // wireErr preserves a method error's exact text while unwrapping to the core
 // sentinel it ended with.
@@ -411,10 +420,10 @@ func (c *Client) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	if c.node != "" && c.node != core.SelfNodeID {
 		return nil, errors.New("control: live event streams are not available for remote fleet nodes yet")
 	}
-	c.mu.Lock()
 	c.refreshToken()
+	c.meta.Lock()
 	tok := c.token
-	c.mu.Unlock()
+	c.meta.Unlock()
 	dc, err := Dial(c.path, tok)
 	if err != nil {
 		return nil, err

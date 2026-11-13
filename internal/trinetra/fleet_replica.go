@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,9 +21,15 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
+	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 )
 
 const maxReplicaSeries = 5000
+
+// maxReplicaPluginSeries is the separate per-node budget for plugin.* series.
+const maxReplicaPluginSeries = plugin.FleetPluginSeriesBudget
+
+const pluginSeriesPrefix = "plugin."
 
 var errRemoteNode = errors.New("not available for a remote fleet node yet")
 
@@ -45,6 +52,8 @@ type ingestState struct {
 	DroppedOutOfOrder  int64 `json:"dropped_out_of_order,omitempty"`
 	DroppedDuplicate   int64 `json:"dropped_duplicate,omitempty"`
 	DroppedCardinality int64 `json:"dropped_cardinality,omitempty"`
+	// DroppedPluginCardinality counts plugin.* points refused by the plugin series budget.
+	DroppedPluginCardinality int64 `json:"dropped_plugin_cardinality,omitempty"`
 	// WarnedOutOfOrder / WarnedCardinality are the drop counters as of the master's last drop
 	// check (see masterLoop.checkDrops).
 	WarnedOutOfOrder  int64 `json:"warned_out_of_order"`
@@ -70,6 +79,8 @@ type replicaNode struct {
 	st     ingestState
 	last   map[string]int64
 	series int
+	// pluginSeries counts plugin.* series, which never count against series.
+	pluginSeries int
 	// lastAlertTS/alertLines are the KindAlert ordering/dedupe guard, scoped PER ALERT KEY
 	// (map keyed by AlertEvent.Key).
 	lastAlertTS map[string]int64
@@ -149,7 +160,14 @@ func (n *replicaNode) seedLocked() {
 		n.skewInit = n.st.SkewSec != 0
 	}
 	if ms, err := n.store.Metrics(ResRaw); err == nil {
-		n.series = len(ms)
+		n.series, n.pluginSeries = 0, 0
+		for _, m := range ms {
+			if strings.HasPrefix(m, pluginSeriesPrefix) {
+				n.pluginSeries++
+			} else {
+				n.series++
+			}
+		}
 	}
 	// The dedupe set is scoped PER ALERT KEY (see the struct field doc comment): several
 	// alerts, of possibly different keys.
@@ -305,11 +323,19 @@ func (n *replicaNode) admit(metric string, res Resolution, ts int64) (bool, erro
 			return false, err
 		}
 		if last == math.MinInt64 {
-			if n.series >= maxReplicaSeries {
-				n.st.DroppedCardinality++
-				return false, nil
+			if strings.HasPrefix(metric, pluginSeriesPrefix) {
+				if n.pluginSeries >= maxReplicaPluginSeries {
+					n.st.DroppedPluginCardinality++
+					return false, nil
+				}
+				n.pluginSeries++
+			} else {
+				if n.series >= maxReplicaSeries {
+					n.st.DroppedCardinality++
+					return false, nil
+				}
+				n.series++
 			}
-			n.series++
 		}
 	}
 	if ts <= last {

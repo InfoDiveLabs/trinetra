@@ -1,0 +1,27 @@
+{{define "pw-error"}}<div class="plugin-slot plugin-error"><span class="led warn"></span> <b>{{.Name}}</b> {{.Class}}. <span class="note">Details are in the plugin's log.</span></div>{{end}}
+
+{{define "pw-slot"}}<div class="plugin-slot" data-plugin="{{.PluginID}}">{{range .Widgets}}{{template "pw-widget" .}}{{end}}</div>{{end}}
+
+{{define "pw-widget"}}<div class="panel plugin-widget pw-{{.Kind}}">{{if .Title}}<div class="head"><span class="eyebrow">{{.Title}}</span></div>{{end}}{{if eq .Kind "timeseries"}}{{template "pw-timeseries" .}}{{else if eq .Kind "stat"}}{{template "pw-stat" .}}{{else if eq .Kind "table"}}{{template "pw-table" .}}{{else if eq .Kind "kv"}}{{template "pw-kv" .}}{{else if eq .Kind "log"}}{{template "pw-log" .}}{{else if eq .Kind "form"}}{{template "pw-form" .Form}}{{else if eq .Kind "action"}}{{template "pw-action" .Action}}{{else if eq .Kind "text"}}{{template "pw-text" .}}{{else if eq .Kind "status"}}{{template "pw-status" .}}{{end}}</div>{{end}}
+
+{{define "pw-timeseries"}}<div class="u-chart plugin-chart" id="{{.ChartID}}" data-plugin-chart data-metrics="{{.Metrics}}" data-labels="{{.Labels}}" data-range="{{.Range}}"{{if .Unit}} data-unit="{{.Unit}}"{{end}}></div>{{end}}
+
+{{define "pw-stat"}}<div class="pw-stat-val{{if .Stat.Tone}} tone-{{.Stat.Tone}}{{end}}"><span class="val">{{.Stat.Value}}</span>{{if .Stat.Unit}} <span class="unit mono">{{.Stat.Unit}}</span>{{end}}</div>{{if .Stat.Hint}}<div class="note">{{.Stat.Hint}}</div>{{end}}{{end}}
+
+{{define "pw-table"}}<div class="plugin-table-wrap"><table><thead><tr>{{range .Table.Columns}}<th>{{.}}</th>{{end}}</tr></thead><tbody>{{range .Table.Rows}}<tr>{{range .}}<td>{{.}}</td>{{end}}</tr>{{end}}</tbody></table></div>{{end}}
+
+{{define "pw-kv"}}<dl class="pw-kv">{{range .KV}}<dt>{{.Key}}</dt><dd class="mono">{{.Value}}</dd>{{end}}</dl>{{end}}
+
+{{define "pw-log"}}<pre class="plugin-log mono">{{.LogText}}</pre>{{end}}
+
+{{define "pw-text"}}{{if .TextHTML}}<div class="pw-text">{{.TextHTML}}</div>{{else}}<div class="pw-text pw-plain">{{.TextPlain}}</div>{{end}}{{end}}
+
+{{define "pw-status"}}{{range .Items}}<div class="row"><span class="led {{.Led}}"></span><div class="name"><b>{{.Name}}</b>{{if .Detail}}<div class="note">{{.Detail}}</div>{{end}}</div></div>{{end}}{{end}}
+
+{{define "pw-hidden"}}<input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="plugin" value="{{.PluginID}}"><input type="hidden" name="action" value="{{.ID}}">{{if .Node}}<input type="hidden" name="node" value="{{.Node}}">{{end}}{{if .Container}}<input type="hidden" name="container" value="{{.Container}}">{{end}}{{end}}
+
+{{define "pw-confirm"}}{{if .Mutating}}<label class="pw-confirm"><input type="checkbox" name="confirmed" value="1" required> {{if .Confirm}}{{.Confirm}}{{else}}Confirm{{end}}</label>{{end}}{{end}}
+
+{{define "pw-action"}}<form method="post" action="/plugins/action" class="pw-action"{{if .Confirm}} data-confirm="{{.Confirm}}"{{end}}>{{template "pw-hidden" .}}{{range .Params}}<input type="hidden" name="param.{{.K}}" value="{{.V}}">{{end}}{{template "pw-confirm" .}}<button class="btn{{if .Mutating}} ghost{{end}}" type="submit">{{.Label}}</button></form>{{end}}
+
+{{define "pw-form"}}<form method="post" action="/plugins/action" class="pw-form"{{if .Confirm}} data-confirm="{{.Confirm}}"{{end}}>{{template "pw-hidden" .ActionView}}{{range .Fields}}{{if eq .Type "boolean"}}<label class="field chk"><input type="checkbox" name="param.{{.Name}}" value="true"{{if .Checked}} checked{{end}}> <span class="lb">{{.Label}}</span></label>{{else}}<label class="field"><span class="lb">{{.Label}}</span>{{if eq .Type "enum"}}<select name="param.{{.Name}}"{{if .Required}} required{{end}}>{{$v := .Value}}{{range .Options}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{.}}</option>{{end}}</select>{{else if eq .Type "secret"}}<input type="password" name="param.{{.Name}}" autocomplete="off"{{if .Required}} required{{end}}>{{else if or (eq .Type "integer") (eq .Type "number")}}<input type="number" name="param.{{.Name}}" value="{{.Value}}"{{if eq .Type "number"}} step="any"{{end}}{{if .Required}} required{{end}}>{{else}}<input type="text" name="param.{{.Name}}" value="{{.Value}}"{{if .Required}} required{{end}}>{{end}}</label>{{end}}{{end}}{{template "pw-confirm" .ActionView}}<button class="btn primary" type="submit">{{.Submit}}</button></form>{{end}}

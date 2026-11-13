@@ -18,6 +18,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/control"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 	"github.com/InfoDiveLabs/trinetra/internal/web"
 )
 
@@ -128,7 +129,8 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 	cfg := lastGoodConfig(client.Config)
 
 	deps := web.Deps{
-		Cfg: cfg,
+		Plugins: func() plugin.Manager { return client.Plugins() },
+		Cfg:     cfg,
 		// Reload is the /public page's save path; ApplyConfig is the same
 		// validate-persist-apply write that client.Config reads back.
 		Reload: client.ApplyConfig,

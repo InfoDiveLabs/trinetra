@@ -13,6 +13,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
+	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
@@ -56,8 +57,12 @@ type fleetProvider struct {
 type fleetAwareAPI struct {
 	core.API
 	*fleetProvider
-	status *statusPageRuntime
+	status  *statusPageRuntime
+	plugins plugin.Manager
 }
+
+// Plugins implements plugin.ManagerProvider.
+func (a *fleetAwareAPI) Plugins() plugin.Manager { return a.plugins }
 
 func (a *fleetAwareAPI) StatusPage() core.StatusPageAPI {
 	if a.status == nil {

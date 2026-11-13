@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/pluginhost"
 	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
@@ -129,7 +131,14 @@ func (a *fileAPI) Events(from, to int64) ([]core.DownEventView, error) {
 // the shared activeAlertRecords helper (coreapi_alerts.go).
 func (a *fileAPI) ActiveAlerts() ([]core.AlertRecord, error) {
 	state := LoadAlertState(a.alertStatePath(), osFS{})
-	return activeAlertRecords(state), nil
+	recs := activeAlertRecords(state)
+	if book, err := pluginhost.OpenAlertBook(filepath.Join(a.stateDir, "plugins", "alerts.json"), nil, nil); err == nil {
+		if extra := book.Active(); len(extra) > 0 {
+			recs = append(recs, extra...)
+			sort.SliceStable(recs, func(i, j int) bool { return recs[i].Key < recs[j].Key })
+		}
+	}
+	return recs, nil
 }
 
 // AlertHistory implements core.API: it delegates to the shared alertHistoryRecords helper

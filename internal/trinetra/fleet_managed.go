@@ -6,16 +6,19 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
+	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 )
 
 // managedFragmentAllowlistKeys is the exact, closed set of config.Config keys a
@@ -42,12 +45,88 @@ func randomManagedFragmentID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// validateManagedFragmentValues rejects any key outside the allowlist.
+// managedPluginSchema looks up an installed plugin's config schema on the master; wireFleet sets it.
+var managedPluginSchema func(id string) (*plugin.ConfigSchema, bool)
+
+// splitManagedPluginKey splits plugin.<id>.<key>.
+func splitManagedPluginKey(k string) (id, key string, ok bool) {
+	if !core.ManagedPluginKeyPattern.MatchString(k) {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(k, "plugin.")
+	i := strings.LastIndex(rest, ".")
+	return rest[:i], rest[i+1:], true
+}
+
+func validateManagedPluginKey(k, v string) error {
+	id, key, _ := splitManagedPluginKey(k)
+	if managedPluginSchema == nil {
+		return fmt.Errorf("%q: plugin configuration is not available on this node", k)
+	}
+	schema, installed := managedPluginSchema(id)
+	if !installed {
+		return fmt.Errorf("%q: plugin %q is not installed on the master", k, id)
+	}
+	if schema == nil || schema.Properties[key] == nil {
+		return fmt.Errorf("%q: %q is not a setting of plugin %q", k, key, id)
+	}
+	one := &plugin.ConfigSchema{Type: "object", Properties: map[string]*plugin.SchemaProp{key: schema.Properties[key]}}
+	typed, ferrs := plugin.CoerceStrings(one, map[string]string{key: v})
+	if len(ferrs) == 0 {
+		ferrs = plugin.ValidateValues(one, typed)
+	}
+	if msg, bad := ferrs[key]; bad {
+		return fmt.Errorf("%q: %s", k, msg)
+	}
+	return nil
+}
+
+// orderedManagedKeys returns the allowlisted keys present in values in allowlist order, then plugin keys sorted.
+func orderedManagedKeys(values map[string]string) []string {
+	var out, plug []string
+	for _, k := range managedFragmentAllowlistKeys {
+		if _, ok := values[k]; ok {
+			out = append(out, k)
+		}
+	}
+	for k := range values {
+		if core.ManagedPluginKeyPattern.MatchString(k) {
+			plug = append(plug, k)
+		}
+	}
+	sort.Strings(plug)
+	return append(out, plug...)
+}
+
+// splitManagedValues separates config.Config keys from plugin.<id>.<key> keys.
+func splitManagedValues(values map[string]string) (cfg, plug map[string]string) {
+	cfg = map[string]string{}
+	for k, v := range values {
+		if core.ManagedPluginKeyPattern.MatchString(k) {
+			if plug == nil {
+				plug = map[string]string{}
+			}
+			plug[k] = v
+		} else {
+			cfg[k] = v
+		}
+	}
+	return cfg, plug
+}
+
+// validateManagedFragmentValues rejects any key outside the allowlist and plugin.<id>.<key> entries the master cannot resolve or whose value fails the plugin schema.
 func validateManagedFragmentValues(values map[string]string) error {
 	for k := range values {
-		if !managedFragmentAllowlist[k] {
-			return fmt.Errorf("%q is not a managed-config key (allowed: %s)", k, joinManagedFragmentKeys())
+		if managedFragmentAllowlist[k] {
+			continue
 		}
+		if core.ManagedPluginKeyPattern.MatchString(k) {
+			if err := validateManagedPluginKey(k, values[k]); err != nil {
+				return err
+			}
+			continue
+		}
+		return fmt.Errorf("%q is not a managed-config key (allowed: %s, or plugin.<id>.<key>)", k, joinManagedFragmentKeys())
 	}
 	scratch := config.Default()
 	// Deterministic order so a test asserting on the first error is stable.
@@ -287,11 +366,8 @@ func (s *managedFragmentStore) Desired(nodeTags []string) (values map[string]str
 	keyFragment = map[string]string{}
 	contributors := map[string][]string{}
 	for _, f := range applicable {
-		for _, k := range managedFragmentAllowlistKeys {
-			v, ok := f.Values[k]
-			if !ok {
-				continue
-			}
+		for _, k := range orderedManagedKeys(f.Values) {
+			v := f.Values[k]
 			values[k] = v
 			keyFragment[k] = f.ID
 			contributors[k] = append(contributors[k], f.ID)
@@ -437,6 +513,8 @@ type managedChild struct {
 	lastErr      string
 	fragments    map[string]string
 	values       map[string]string
+	pluginApply  ManagedPluginApplier
+	pluginValues map[string]string
 }
 
 func newManagedChild(path string, getCfg func() *config.Config, self core.API, now func() time.Time) *managedChild {
@@ -510,6 +588,72 @@ func (mc *managedChild) Apply(p managedConfigFrameData) {
 	if mc == nil {
 		return
 	}
+	coreValues, pluginValues := splitManagedValues(p.Values)
+	p.Values = coreValues
+	mc.applyCore(p)
+	mc.applyPlugins(pluginValues)
+}
+
+// ManagedPluginApplier applies managed values (string form) to plugin id on this node; last holds the values previously applied. A nil error with applied false means the plugin is not installed here.
+type ManagedPluginApplier func(id string, values, last map[string]string) (applied bool, err error)
+
+// SetPluginApplier installs the seam that applies plugin.<id>.<key> values; nil disables it.
+func (mc *managedChild) SetPluginApplier(f ManagedPluginApplier) {
+	mc.mu.Lock()
+	mc.pluginApply = f
+	mc.mu.Unlock()
+}
+
+func (mc *managedChild) applyPlugins(values map[string]string) {
+	mc.mu.Lock()
+	apply, last := mc.pluginApply, mc.pluginValues
+	mc.mu.Unlock()
+	if apply == nil && len(values) > 0 {
+		mc.setError(fmt.Errorf("plugin configuration is not available on this node"))
+		return
+	}
+	byPlugin := map[string]map[string]string{}
+	for k, v := range values {
+		id, key, _ := splitManagedPluginKey(k)
+		if byPlugin[id] == nil {
+			byPlugin[id] = map[string]string{}
+		}
+		byPlugin[id][key] = v
+	}
+	ids := make([]string, 0, len(byPlugin))
+	for id := range byPlugin {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	next := map[string]string{}
+	var errs []string
+	for _, id := range ids {
+		lastForPlugin := map[string]string{}
+		for k, v := range last {
+			if pid, key, ok := splitManagedPluginKey(k); ok && pid == id {
+				lastForPlugin[key] = v
+			}
+		}
+		applied, err := apply(id, byPlugin[id], lastForPlugin)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("plugin %s: %v", id, err))
+			continue
+		}
+		if applied {
+			for key, v := range byPlugin[id] {
+				next["plugin."+id+"."+key] = v
+			}
+		}
+	}
+	mc.mu.Lock()
+	mc.pluginValues = next
+	mc.mu.Unlock()
+	if len(errs) > 0 {
+		mc.setError(errors.New(strings.Join(errs, "; ")))
+	}
+}
+
+func (mc *managedChild) applyCore(p managedConfigFrameData) {
 	mc.mu.Lock()
 	mc.everReceived = true
 	mc.fragments = cloneStringMap(p.Fragments)
@@ -692,6 +836,7 @@ func (mc *managedChild) Report() *fleet.ManagedReport {
 	}
 	mc.mu.Lock()
 	everReceived, version, applied, lastErr := mc.everReceived, mc.version, mc.applied, mc.lastErr
+	pluginValues := cloneStringMap(mc.pluginValues)
 	mc.mu.Unlock()
 	if !everReceived {
 		return nil
@@ -703,6 +848,9 @@ func (mc *managedChild) Report() *fleet.ManagedReport {
 				values[k] = v
 			}
 		}
+	}
+	for k, v := range pluginValues {
+		values[k] = v
 	}
 	return &fleet.ManagedReport{Version: version, Applied: applied, Error: lastErr, Values: values}
 }

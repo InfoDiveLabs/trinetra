@@ -432,7 +432,12 @@ func (a *inprocAPI) Events(from, to int64) ([]core.DownEventView, error) {
 // the shared activeAlertRecords helper (coreapi_alerts.go).
 func (a *inprocAPI) ActiveAlerts() ([]core.AlertRecord, error) {
 	state := LoadAlertState(a.alertStatePath(), osFS{})
-	return activeAlertRecords(state), nil
+	recs := activeAlertRecords(state)
+	if book := pluginAlertBook.Load(); book != nil {
+		recs = append(recs, book.Active()...)
+		sort.SliceStable(recs, func(i, j int) bool { return recs[i].Key < recs[j].Key })
+	}
+	return recs, nil
 }
 
 // AlertHistory implements core.API: it delegates to the shared alertHistoryRecords helper
@@ -622,6 +627,9 @@ func (a *inprocAPI) ApplyConfig(c *config.Config) error { return a.reload(c) }
 // AckAlert implements core.API: it loads alerts.json (LoadAlertState, same helper
 // ActiveAlerts/AlertHistory above use), acks key via AlertState.Ack (anomaly.go).
 func (a *inprocAPI) AckAlert(key string) error {
+	if book := pluginAlertBook.Load(); book != nil && book.Owns(key) {
+		return book.Ack(key, time.Now().Unix())
+	}
 	statePath := a.alertStatePath()
 	state := LoadAlertState(statePath, osFS{})
 	if err := state.Ack(key, time.Now().Unix()); err != nil {
@@ -632,6 +640,9 @@ func (a *inprocAPI) AckAlert(key string) error {
 
 // UnackAlert implements core.API: AckAlert's mirror image, via AlertState.Unack.
 func (a *inprocAPI) UnackAlert(key string) error {
+	if book := pluginAlertBook.Load(); book != nil && book.Owns(key) {
+		return book.Unack(key)
+	}
 	statePath := a.alertStatePath()
 	state := LoadAlertState(statePath, osFS{})
 	if err := state.Unack(key); err != nil {

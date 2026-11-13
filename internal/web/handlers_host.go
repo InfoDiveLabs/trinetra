@@ -6,22 +6,24 @@ import (
 	"net/http"
 
 	"github.com/InfoDiveLabs/trinetra/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 )
 
 // HostPageData is what templates/host.html renders against: the static host hardware/OS
 // inventory (#100).
 type HostPageData struct {
 	PageData
-	Available bool // false when the API is unavailable or errored
-	Hostname  string
-	OS        string
-	Kernel    string
-	CPU       string // "model (N cores / M threads @ F MHz)"
-	Memory    string // humanized bytes
-	Uptime    string // "Nd Nh Nm"
-	LocalIP   string
-	PublicIP  string
-	Disks     []hostDiskRow
+	Available      bool // false when the API is unavailable or errored
+	Hostname       string
+	OS             string
+	Kernel         string
+	CPU            string // "model (N cores / M threads @ F MHz)"
+	Memory         string // humanized bytes
+	Uptime         string // "Nd Nh Nm"
+	LocalIP        string
+	PublicIP       string
+	Disks          []hostDiskRow
+	PluginSections []pluginSlotRef
 }
 
 type hostDiskRow struct {
@@ -79,6 +81,7 @@ func shortCPU(h core.HostInfoView) string {
 
 func buildHostPageData(r *http.Request, d Deps) HostPageData {
 	data := HostPageData{PageData: newPageData(r, d, "Host", "Hardware and OS inventory")}
+	data.PluginSections = slotRefs(r, d, plugin.SlotHostSection)
 	api := apiFor(r, d)
 	if api == nil {
 		return data

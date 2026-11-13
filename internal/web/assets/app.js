@@ -282,10 +282,13 @@
       });
     }
 
+    if(kind==='container'&&d.name) swPluginContainerSlots(body,d.name);
+
     drawer.innerHTML='';
     drawer.appendChild(head); drawer.appendChild(body);
     document.getElementById('swClose').addEventListener('click',closeDrawer);
     drawer.classList.add('on'); dScrim.classList.add('on');
+    if(window.htmx) htmx.process(drawer);
   });
 
   // ---- modals ----
@@ -1600,4 +1603,64 @@
     sheet.addEventListener('click',function(e){ if(e.target.closest('a')) close(); });
     document.addEventListener('keydown',function(e){ if(e.key==='Escape') close(); });
   })();
+
+  // ---- plugins: slot fragments and charts ----
+  // Plugin slots are server-rendered HTML fragments loaded by htmx; the only
+  // client work is mounting uPlot charts from the data-* attributes of
+  // .plugin-slot [data-plugin-chart] and attaching container-drawer slots.
+  var PLUGIN_RANGE_SECONDS={'1h':3600,'6h':21600,'24h':86400,'7d':604800};
+  function swPluginContainerSlots(body,name){
+    ['container.section','container.action'].forEach(function(slot){
+      var host=mkEl('div','plugin-slot-host');
+      host.setAttribute('hx-get',nodeURL('/plugins/slot?slot='+encodeURIComponent(slot)+'&container='+encodeURIComponent(name)));
+      host.setAttribute('hx-trigger','load');
+      body.appendChild(host);
+    });
+  }
+  function swPluginMerge(responses){
+    var tsSet={};
+    responses.forEach(function(s){ (s[0]||[]).forEach(function(t){tsSet[t]=true;}); });
+    var union=Object.keys(tsSet).map(Number).sort(function(a,b){return a-b;});
+    var cols=[union];
+    responses.forEach(function(s){
+      var lookup={}, ts=s[0]||[], avg=s[1]||[];
+      for(var i=0;i<ts.length;i++) lookup[ts[i]]=avg[i];
+      cols.push(union.map(function(t){ return (t in lookup)?lookup[t]:null; }));
+    });
+    return cols;
+  }
+  function swBootPluginCharts(root){
+    if(!window.uPlot) return;
+    (root||document).querySelectorAll('.plugin-slot [data-plugin-chart]').forEach(function(el){
+      if(el.dataset.booted) return;
+      el.dataset.booted='1';
+      var metrics=(el.dataset.metrics||'').split(',').filter(Boolean);
+      var labels=(el.dataset.labels||'').split(',');
+      var span=PLUGIN_RANGE_SECONDS[el.dataset.range]||PLUGIN_RANGE_SECONDS['6h'];
+      var to=Math.floor(Date.now()/1000), from=to-span;
+      var palette=[CHART_COLORS.info,CHART_COLORS.pink,CHART_COLORS.cyan,CHART_COLORS.violet];
+      Promise.all(metrics.map(function(m){
+        return fetch(nodeURL('/api/series?metric='+encodeURIComponent(m)+'&from='+from+'&to='+to),{credentials:'same-origin'})
+          .then(function(r){ if(!r.ok) throw new Error('series'); return r.json(); })
+          .then(function(j){ return (j&&j.series&&j.series.length>=2)?j.series:[[],[]]; })
+          .catch(function(){ return [[],[]]; });
+      })).then(function(responses){
+        var series=[{}];
+        metrics.forEach(function(m,i){ var c=palette[i%palette.length]; series.push({label:labels[i]||m,stroke:c,width:1.8,fill:c+'22',spanGaps:true}); });
+        var u=new uPlot({width:el.clientWidth||600,height:el.clientHeight||180,series:series,cursor:{show:true},legend:{show:metrics.length>1},axes:swAxesOpt()},swPluginMerge(responses),el);
+        swRegisterChart(u,el);
+        el._pluginChart=u;
+      });
+    });
+  }
+  document.addEventListener('htmx:afterSwap',function(e){ swBootPluginCharts(e.target); });
+  document.addEventListener('sw-theme',function(){
+    document.querySelectorAll('.plugin-slot [data-plugin-chart]').forEach(function(el){
+      if(el._pluginChart){ el._pluginChart.destroy(); el._pluginChart=null; }
+      el.dataset.booted='';
+    });
+    swBootPluginCharts(document);
+  });
+  swBootPluginCharts(document);
+  // ---- end plugins ----
 })();

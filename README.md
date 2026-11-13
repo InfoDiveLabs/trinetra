@@ -11,7 +11,8 @@
 <p align="center">
 One small Go daemon per server. Live dashboards, readable alert rules, Telegram in your pocket,<br>
 and, when you have more than one box, a whole fleet with incidents, routing and escalation.<br>
-No agent zoo, no cloud, no Prometheus, no external database.
+No agent zoo, no cloud, no Prometheus required, no external database.<br>
+Want Prometheus or Grafana anyway? Add a plugin: see <a href="docs/plugins/README.md">docs/plugins</a>.
 </p>
 
 <p align="center">

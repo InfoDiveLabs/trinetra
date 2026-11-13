@@ -1,0 +1,62 @@
+name: publish
+on:
+  push:
+    branches: [main]
+    paths: ["plugins/**", "revoked.json"]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: registry-publish
+  cancel-in-progress: false
+env:
+  TRINETRA_REF: main
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: registry
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: InfoDiveLabs/trinetra
+          ref: ${{ env.TRINETRA_REF }}
+          path: .trinetra
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: { go-version-file: .trinetra/go.mod }
+      - name: Build registry tool
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          (cd .trinetra && go build -o "$RUNNER_TEMP/bin/trinetra-registry" ./cmd/trinetra-registry)
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Build every plugin
+        env:
+          ARCHES: "amd64 arm64 arm"
+        run: scripts/build-all.sh "$RUNNER_TEMP/build"
+      - name: CI-sign manifests and upload drafts for maintainer review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRINETRA_CI_SIGNING_KEY: ${{ secrets.TRINETRA_CI_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$TRINETRA_CI_SIGNING_KEY" > "$RUNNER_TEMP/ci.key"
+          for d in "$RUNNER_TEMP"/build/*/; do
+            id=$(basename "$d")
+            version=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$d/plugin.json" | head -n1)
+            tag="$id-v$version"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "$tag already exists; leaving it unchanged"
+              continue
+            fi
+            trinetra-registry sign -key "$RUNNER_TEMP/ci.key" -kind manifest -in "$d/plugin.json" -out "$d/plugin.json.ci.sig"
+            tar -C "$d" -czf "$RUNNER_TEMP/$id-$version-build.tgz" .
+            gh release create "$tag" --draft --title "$tag" \
+              --notes "Plugin $id $version, CI-signed. Awaiting maintainer co-sign: scripts/cosign.sh $id $version"
+            gh release upload "$tag" "$RUNNER_TEMP/$id-$version-build.tgz"
+          done
+          rm -f "$RUNNER_TEMP/ci.key"

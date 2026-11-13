@@ -43,5 +43,7 @@
   {{else}}
   <div class="panel"><div class="note">Host information is unavailable (the daemon could not be reached).</div></div>
   {{end}}
+  {{range .PluginSections}}<div class="plugin-section" hx-get="{{.Src}}" hx-trigger="load" hx-swap="innerHTML"><div class="panel"><div class="note">Loading {{.Title}}&hellip;</div></div></div>
+  {{end}}
 </div>
 {{end}}
