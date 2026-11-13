@@ -828,6 +828,13 @@ label.chk input,.pw-confirm input{width:auto; margin-top:3px; flex:none}
 .plugin-actions .pw-confirm{margin:0; align-items:center}
 .plugin-actions .pw-confirm input{margin-top:0}
 .plugin-slot{display:grid; gap:12px; min-width:0}
+.plugin-panel{min-width:0}
+.plugin-panel-head{display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin:0 2px 8px}
+.plugin-chart{min-height:180px; min-width:0}
+.plugin-chart .uplot{width:100%}
+.plugin-chart .u-legend{font-size:11px; text-align:left; margin:6px 0 0; white-space:normal}
+.plugin-chart .u-legend .u-series:first-child{display:none}
+.plugin-chart .u-inline tr{margin-right:10px}
 .plugin-slot-host{min-width:0}
 .plugin-widget{min-width:0}
 .plugin-error{display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:12px 14px; border:1px solid color-mix(in oklab,var(--warn) 45%,var(--border)); border-radius:var(--r); background:var(--surface); font-size:13px}

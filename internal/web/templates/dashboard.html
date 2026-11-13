@@ -146,7 +146,7 @@
   {{if or .PluginPanels .CanPickPanels}}
   <div class="section-label"><span class="eyebrow">Plugins</span>{{if .CanPickPanels}}<a href="/dashboard/panels" class="note mono">choose panels →</a>{{end}}</div>
   {{if .PluginPanels}}<div class="grid g-2 plugin-panels">
-    {{range .PluginPanels}}<div class="plugin-panel" hx-get="{{.Src}}" hx-trigger="load" hx-swap="innerHTML"><div class="panel"><div class="note">Loading {{.Title}}&hellip;</div></div></div>
+    {{range .PluginPanels}}<div class="plugin-panel"><div class="plugin-panel-head"><span class="eyebrow">{{.Title}}</span><span class="note">{{.Plugin}}</span></div><div hx-get="{{.Src}}" hx-trigger="load" hx-swap="innerHTML"><div class="panel"><div class="note">Loading&hellip;</div></div></div></div>
     {{end}}
   </div>{{end}}
   {{end}}

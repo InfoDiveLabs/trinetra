@@ -197,7 +197,14 @@ func pluginActionHandler(d Deps) http.HandlerFunc {
 			Action: aid, Context: plugin.SlotContext{Node: node, Container: container}, User: user, Params: params, Confirmed: confirmed,
 		}})
 		if decl.Mutating {
-			logAudit(d, r, "plugin.action", pid+"/"+aid, "", "")
+			target := ""
+			if node != "" {
+				target = "node " + node
+			}
+			if container != "" {
+				target = strings.TrimSpace(target + " container " + container)
+			}
+			logAudit(d, r, "plugin.action", pid+"/"+aid, "", target)
 		}
 		data := PluginActionPageData{PageData: newPageData(r, d, decl.Label, st.Manifest.Name), Label: decl.Label, Back: actionBackPath(r)}
 		if err != nil {

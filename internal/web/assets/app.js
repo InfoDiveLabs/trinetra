@@ -1646,7 +1646,7 @@
           .catch(function(){ return [[],[]]; });
       })).then(function(responses){
         var series=[{}];
-        metrics.forEach(function(m,i){ var c=palette[i%palette.length]; series.push({label:labels[i]||m,stroke:c,width:1.8,fill:c+'22'}); });
+        metrics.forEach(function(m,i){ var c=palette[i%palette.length]; series.push({label:labels[i]||m,stroke:c,width:1.8,fill:c+'22',spanGaps:true}); });
         var u=new uPlot({width:el.clientWidth||600,height:el.clientHeight||180,series:series,cursor:{show:true},legend:{show:metrics.length>1},axes:swAxesOpt()},swPluginMerge(responses),el);
         swRegisterChart(u,el);
         el._pluginChart=u;

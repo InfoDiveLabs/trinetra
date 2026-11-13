@@ -215,8 +215,8 @@ func TestActionAudited(t *testing.T) {
 	if strings.Contains(readAuditActions(t, e.d.StateDir), "plugin.action") {
 		t.Error("non-mutating action audited")
 	}
-	e.post(RoleAdmin, "/plugins/action", map[string][]string{"plugin": {"demo"}, "action": {"restart"}, "confirmed": {"1"}})
-	if a := readAuditActions(t, e.d.StateDir); !strings.Contains(a, "plugin.action") || !strings.Contains(a, "demo") {
+	e.post(RoleAdmin, "/plugins/action", map[string][]string{"plugin": {"demo"}, "action": {"restart"}, "confirmed": {"1"}, "container": {"shop-web"}})
+	if a := readAuditActions(t, e.d.StateDir); !strings.Contains(a, "plugin.action") || !strings.Contains(a, "demo") || !strings.Contains(a, "container shop-web") {
 		t.Errorf("audit: %s", a)
 	}
 }
@@ -359,5 +359,24 @@ func TestContainerSectionPlaceholderNamesThePlugin(t *testing.T) {
 	_, body = fragment(t, e, RoleViewer, "/plugins/slot?slot=container.action&container=web")
 	if strings.Contains(body, "ActionTitle") {
 		t.Errorf("action placeholder should not carry a section heading: %s", body)
+	}
+}
+
+func TestDashboardPanelKeepsItsTitleAfterLoading(t *testing.T) {
+	m := newFakeManager(statusNamed("a"))
+	o := offer("a", plugin.SlotDashboardPanel, "one", plugin.RoleViewer)
+	o.Title = "Uptime overview"
+	m.offers = []plugin.SlotOffer{o}
+	e := newPluginEnv(t, m)
+	e.post(RoleViewer, "/dashboard/panels", map[string][]string{"panel": {"a/one"}})
+	_, dash := fragment(t, e, RoleViewer, "/")
+	i := strings.Index(dash, `class="plugin-panel"`)
+	if i < 0 {
+		t.Fatal("no plugin panel")
+	}
+	panel := dash[i:]
+	title, loader := strings.Index(panel, "Uptime overview"), strings.Index(panel, "hx-get=")
+	if title < 0 || loader < 0 || title > loader {
+		t.Errorf("panel title must sit outside the element htmx replaces:\n%.400s", panel)
 	}
 }

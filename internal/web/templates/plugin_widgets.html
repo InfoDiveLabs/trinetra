@@ -4,7 +4,7 @@
 
 {{define "pw-widget"}}<div class="panel plugin-widget pw-{{.Kind}}">{{if .Title}}<div class="head"><span class="eyebrow">{{.Title}}</span></div>{{end}}{{if eq .Kind "timeseries"}}{{template "pw-timeseries" .}}{{else if eq .Kind "stat"}}{{template "pw-stat" .}}{{else if eq .Kind "table"}}{{template "pw-table" .}}{{else if eq .Kind "kv"}}{{template "pw-kv" .}}{{else if eq .Kind "log"}}{{template "pw-log" .}}{{else if eq .Kind "form"}}{{template "pw-form" .Form}}{{else if eq .Kind "action"}}{{template "pw-action" .Action}}{{else if eq .Kind "text"}}{{template "pw-text" .}}{{else if eq .Kind "status"}}{{template "pw-status" .}}{{end}}</div>{{end}}
 
-{{define "pw-timeseries"}}<div class="u-chart plugin-chart" id="{{.ChartID}}" data-plugin-chart data-metrics="{{.Metrics}}" data-labels="{{.Labels}}" data-range="{{.Range}}"{{if .Unit}} data-unit="{{.Unit}}"{{end}} style="height:180px"></div>{{end}}
+{{define "pw-timeseries"}}<div class="u-chart plugin-chart" id="{{.ChartID}}" data-plugin-chart data-metrics="{{.Metrics}}" data-labels="{{.Labels}}" data-range="{{.Range}}"{{if .Unit}} data-unit="{{.Unit}}"{{end}}></div>{{end}}
 
 {{define "pw-stat"}}<div class="pw-stat-val{{if .Stat.Tone}} tone-{{.Stat.Tone}}{{end}}"><span class="val">{{.Stat.Value}}</span>{{if .Stat.Unit}} <span class="unit mono">{{.Stat.Unit}}</span>{{end}}</div>{{if .Stat.Hint}}<div class="note">{{.Stat.Hint}}</div>{{end}}{{end}}
 
