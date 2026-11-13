@@ -823,7 +823,10 @@ td.pick input,th.pick input{cursor:pointer}
 #plugin-consent,#plugin-panels{max-width:720px}
 #integration-page>.panel,#integration-page>.grid{margin-bottom:14px}
 label.chk,.pw-confirm{display:flex; gap:8px; align-items:flex-start; font-size:13px; margin-bottom:10px}
-label.chk input,.pw-confirm input{margin-top:3px; flex:none}
+label.chk input,.pw-confirm input{width:auto; margin-top:3px; flex:none}
+.plugin-card > form{margin-top:12px}
+.plugin-actions .pw-confirm{margin:0; align-items:center}
+.plugin-actions .pw-confirm input{margin-top:0}
 .plugin-slot{display:grid; gap:12px; min-width:0}
 .plugin-slot-host{min-width:0}
 .plugin-widget{min-width:0}
