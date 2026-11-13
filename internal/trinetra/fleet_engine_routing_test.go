@@ -576,7 +576,7 @@ func TestEngineLegacyTextEventsStillParse(t *testing.T) {
 	if !ok {
 		t.Fatal("incident missing")
 	}
-	if fireDelivered, recoverDelivered := legDeliveredStatusFor(got, "", "fleet:node:x:down", 1000); !fireDelivered || recoverDelivered {
+	if fireDelivered, recoverDelivered := legDeliveredStatusFor(got, "", "fleet:node:x:down", 1000, 0); !fireDelivered || recoverDelivered {
 		t.Fatalf("legDeliveredStatusFor(legacy event) = fire=%v recover=%v, want fire=true recover=false", fireDelivered, recoverDelivered)
 	}
 	policy, step, channels, ok := stepEventInfo(got.Timeline[len(got.Timeline)-1])
